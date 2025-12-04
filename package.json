@@ -1,0 +1,51 @@
+{
+    "name": "apertodns",
+    "version": "1.0.1",
+    "description": "ApertoDNS CLI - Dynamic DNS management from your terminal. Manage domains, tokens, and DNS updates.",
+    "main": "index.js",
+    "type": "module",
+    "bin": {
+        "apertodns": "./index.js"
+    },
+    "scripts": {
+        "start": "node index.js"
+    },
+    "keywords": [
+        "ddns",
+        "cli",
+        "dns",
+        "apertodns",
+        "dynamic-dns",
+        "ipv4",
+        "ipv6",
+        "domain",
+        "terminal"
+    ],
+    "author": "Aperto Network <info@apertodns.com>",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/1r0n3d3v3l0per/apertodns.git"
+    },
+    "homepage": "https://apertodns.com",
+    "bugs": {
+        "url": "https://github.com/1r0n3d3v3l0per/apertodns/issues"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "files": [
+        "index.js",
+        "utils.js",
+        "README.md"
+    ],
+    "dependencies": {
+        "chalk": "^5.3.0",
+        "cli-spinners": "^3.3.0",
+        "cli-table3": "^0.6.5",
+        "figlet": "^1.6.0",
+        "inquirer": "^9.3.8",
+        "node-fetch": "^3.3.2",
+        "ora": "^9.0.0"
+    }
+}
