@@ -9,10 +9,6 @@
 
 ApertoDNS is a free Dynamic DNS service that lets you point a subdomain to your dynamic IP address. Perfect for home servers, IoT devices, game servers, NAS systems, and remote access.
 
-<p align="center">
-  <img src="https://apertodns.com/cli-demo.gif" alt="ApertoDNS CLI Demo" width="600">
-</p>
-
 ## Why ApertoDNS?
 
 | Feature | ApertoDNS | No-IP | DuckDNS | Dynu |
