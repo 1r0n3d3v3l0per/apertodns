@@ -3,19 +3,26 @@
 import fs from "fs";
 import fetch from "node-fetch";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 import readline from "readline";
 import inquirer from "inquirer";
-import { log, getCurrentIP, getCurrentIPv6, loadLastIP, saveCurrentIP } from "./utils.js";
+import { log, getCurrentIP, getCurrentIPv6, loadLastIP, saveCurrentIP, getConfigDir } from "./utils.js";
 import chalk from "chalk";
 import figlet from "figlet";
 import Table from "cli-table3";
 import ora from "ora";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.resolve(__dirname, "config.json");
-const UPDATE_CACHE_PATH = path.resolve(__dirname, ".update-check");
+const CONFIG_DIR = getConfigDir();
+const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const UPDATE_CACHE_PATH = path.join(CONFIG_DIR, ".update-check");
 const API_BASE = "https://api.apertodns.com/api";
+
+// Ensure config directory exists
+if (!fs.existsSync(CONFIG_DIR)) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+}
 
 // Leggi versione da package.json
 const getPackageVersion = () => {
@@ -116,7 +123,7 @@ const showBanner = async () => {
     console.log(yellow("  ╔════════════════════════════════════════════════════════╗"));
     console.log(yellow("  ║") + red("  ⚠️  Nuova versione disponibile: ") + green.bold(`v${newVersion}`) + yellow("                  ║"));
     console.log(yellow("  ║") + gray(`     Tu hai: v${CURRENT_VERSION}`) + yellow("                                      ║"));
-    console.log(yellow("  ║") + cyan("     Aggiorna: ") + chalk.white("npm update -g apertodns-cli") + yellow("           ║"));
+    console.log(yellow("  ║") + cyan("     Aggiorna: ") + chalk.white("npm update -g apertodns") + yellow("               ║"));
     console.log(yellow("  ╚════════════════════════════════════════════════════════╝\n"));
   }
 };
@@ -135,8 +142,8 @@ if (isCron) {
 }
 
 const isQuiet = args.includes("--quiet");
-const showHelp = args.includes("--help");
-const showVersion = args.includes("--version");
+const showHelp = args.includes("--help") || args.includes("-h");
+const showVersion = args.includes("--version") || args.includes("-v");
 const showJson = args.includes("--json");
 const runVerify = args.includes("--verify");
 const runSetup = args.includes("--setup");
@@ -156,22 +163,40 @@ const testDns = args.includes("--test") ? args[args.indexOf("--test") + 1] : nul
 const showDashboard = args.includes("--dashboard");
 const listWebhooks = args.includes("--webhooks");
 const listApiKeys = args.includes("--api-keys");
+const createApiKeyArg = args.includes("--create-api-key") ? args[args.indexOf("--create-api-key") + 1] : null;
+const deleteApiKeyArg = args.includes("--delete-api-key") ? args[args.indexOf("--delete-api-key") + 1] : null;
+const showScopes = args.includes("--scopes");
+const useApiKey = args.includes("--api-key") ? args[args.indexOf("--api-key") + 1] : null;
 const runInteractive = args.length === 0;
+const runDaemon = args.includes("--daemon");
+const daemonInterval = args.includes("--interval") ? parseInt(args[args.indexOf("--interval") + 1]) : 300;
+const showMyIp = args.includes("--my-ip") || args.includes("--ip");
+const logout = args.includes("--logout");
+
+// JSON output helper
+const jsonOutput = (data) => {
+  if (showJson) {
+    console.log(JSON.stringify(data, null, 2));
+    return true;
+  }
+  return false;
+};
 
 // Show help
 if (showHelp) {
   console.log(`
-${orange.bold("ApertoDNS CLI")} - Gestisci il tuo DNS dinamico
+${orange.bold("ApertoDNS CLI")} v${CURRENT_VERSION} - Gestisci il tuo DNS dinamico
 
 ${chalk.bold("USAGE:")}
   apertodns [command] [options]
 
 ${chalk.bold("COMANDI PRINCIPALI:")}
   ${cyan("--dashboard")}          Dashboard completa con tutte le info
-  ${cyan("--domains")}            Lista tutti i tuoi domini (tabella)
-  ${cyan("--tokens")}             Lista tutti i tuoi token (tabella)
+  ${cyan("--domains")}            Lista tutti i tuoi domini
+  ${cyan("--tokens")}             Lista tutti i tuoi token
   ${cyan("--stats")}              Statistiche e metriche
   ${cyan("--logs")}               Ultimi log di attività
+  ${cyan("--my-ip")}              Mostra il tuo IP pubblico attuale
 
 ${chalk.bold("GESTIONE DOMINI:")}
   ${cyan("--add-domain")} <name>  Crea un nuovo dominio
@@ -184,39 +209,62 @@ ${chalk.bold("GESTIONE TOKEN:")}
   ${cyan("--toggle")} <id>        Inverte stato token (ON/OFF)
   ${cyan("--verify")}             Verifica validità token
 
+${chalk.bold("API KEYS:")}
+  ${cyan("--api-keys")}           Lista tutte le API keys
+  ${cyan("--create-api-key")} <n> Crea nuova API key con nome
+  ${cyan("--delete-api-key")} <id> Elimina una API key
+  ${cyan("--scopes")}             Mostra scopes disponibili
+  ${cyan("--api-key")} <key>      Usa API key invece di JWT token
+
 ${chalk.bold("INTEGRAZIONI:")}
   ${cyan("--webhooks")}           Lista webhook configurati
-  ${cyan("--api-keys")}           Lista API keys
 
 ${chalk.bold("CONFIGURAZIONE:")}
   ${cyan("--setup")}              Configurazione guidata (login/registrazione)
   ${cyan("--status")}             Mostra stato attuale
   ${cyan("--config")}             Modifica configurazione
+  ${cyan("--logout")}             Rimuovi configurazione locale
   ${cyan("--force")}              Forza aggiornamento DNS
+
+${chalk.bold("DAEMON MODE:")}
+  ${cyan("--daemon")}             Avvia in modalità daemon (aggiornamento continuo)
+  ${cyan("--interval")} <sec>     Intervallo aggiornamento daemon (default: 300s)
 
 ${chalk.bold("OPZIONI:")}
   ${cyan("--cron")}               Modalità silenziosa per cronjob
   ${cyan("--quiet")}              Nasconde banner
-  ${cyan("--json")}               Output JSON
-  ${cyan("--version")}            Mostra versione
-  ${cyan("--help")}               Mostra questo help
+  ${cyan("--json")}               Output JSON (machine-readable)
+  ${cyan("-v, --version")}        Mostra versione
+  ${cyan("-h, --help")}           Mostra questo help
 
 ${chalk.bold("MODALITÀ INTERATTIVA:")}
   Esegui ${cyan("apertodns")} senza argomenti per il menu interattivo.
 
+${chalk.bold("AUTENTICAZIONE:")}
+  Puoi autenticarti in 3 modi:
+  1. ${cyan("--setup")} - Login interattivo (salva JWT in ~/.apertodns/)
+  2. ${cyan("--api-key <key>")} - Usa API key per singola operazione
+  3. Variabile ambiente ${cyan("APERTODNS_API_KEY")}
+
 ${gray("Esempi:")}
   ${gray("$")} apertodns --dashboard
-  ${gray("$")} apertodns --domains
+  ${gray("$")} apertodns --domains --json
   ${gray("$")} apertodns --add-domain mioserver.apertodns.com
   ${gray("$")} apertodns --test mioserver.apertodns.com
-  ${gray("$")} apertodns --stats
+  ${gray("$")} apertodns --daemon --interval 60
+  ${gray("$")} apertodns --api-key ak_xxx... --domains --json
+
+${gray("Docs: https://apertodns.com/docs")}
 `);
   process.exit(0);
 }
 
 if (showVersion) {
-  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "package.json"), "utf-8"));
-  console.log(`ApertoDNS CLI v${pkg.version}`);
+  if (showJson) {
+    console.log(JSON.stringify({ name: "apertodns", version: CURRENT_VERSION }));
+  } else {
+    console.log(`ApertoDNS CLI v${CURRENT_VERSION}`);
+  }
   process.exit(0);
 }
 
@@ -228,15 +276,18 @@ if (fs.existsSync(CONFIG_PATH)) {
   try {
     config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
   } catch (err) {
-    console.error(red("Errore lettura config.json:"), err.message);
+    if (!showJson) console.error(red("Errore lettura config.json:"), err.message);
   }
 }
 
-// Helper: get JWT token (per API: domains, tokens, dashboard...)
+// Helper: get auth token (JWT or API Key)
 const getAuthToken = async () => {
+  // Priority: CLI arg > env var > config file
+  if (useApiKey) return useApiKey;
+  if (process.env.APERTODNS_API_KEY) return process.env.APERTODNS_API_KEY;
   if (config.jwtToken) return config.jwtToken;
   if (config.apiToken) return config.apiToken; // backward compatibility
-  return await promptInput(cyan("🔑 Token JWT: "));
+  return await promptInput(cyan("🔑 Token JWT o API Key: "));
 };
 
 // Helper: get CLI token (per DDNS: status, force, update...)
@@ -249,66 +300,125 @@ const getCliToken = async () => {
 // Helper: create spinner
 const spinner = (text) => ora({ text, spinner: "dots", color: "yellow" });
 
+// Helper: get auth headers (supports both JWT and API Key)
+const getAuthHeaders = (token) => {
+  // API Keys start with "ak_"
+  if (token && token.startsWith('ak_')) {
+    return { 'X-API-Key': token };
+  }
+  return { Authorization: `Bearer ${token}` };
+};
+
+// ==================== MY IP ====================
+
+const showMyIpCommand = async () => {
+  const spin = !showJson ? spinner("Rilevamento IP...").start() : null;
+
+  try {
+    const [ipv4, ipv6] = await Promise.all([
+      getCurrentIP('https://api.ipify.org').catch(() => null),
+      getCurrentIPv6('https://api6.ipify.org').catch(() => null)
+    ]);
+
+    spin?.stop();
+
+    const data = {
+      ipv4: ipv4?.trim() || null,
+      ipv6: ipv6?.trim() || null,
+      timestamp: new Date().toISOString()
+    };
+
+    if (showJson) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      console.log(`\n🌐 ${chalk.bold('Il tuo IP pubblico')}\n`);
+      console.log(`   ${gray('IPv4:')} ${data.ipv4 ? green.bold(data.ipv4) : red('Non disponibile')}`);
+      console.log(`   ${gray('IPv6:')} ${data.ipv6 ? cyan(data.ipv6) : gray('Non disponibile')}`);
+      console.log();
+    }
+  } catch (err) {
+    spin?.fail("Errore rilevamento IP");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
+  }
+};
+
 // ==================== DOMAINS ====================
 
 const fetchDomains = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento domini...").start();
+  const spin = !showJson ? spinner("Caricamento domini...").start() : null;
   try {
     const res = await fetch(`${API_BASE}/domains`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders(token)
     });
-    spin.stop();
-    if (!res.ok) throw new Error("Errore fetch domini");
+    spin?.stop();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Errore fetch domini");
+    }
     return await res.json();
   } catch (err) {
-    spin.fail("Errore caricamento domini");
-    return [];
+    spin?.fail("Errore caricamento domini");
+    throw err;
   }
 };
 
 const showDomainsList = async () => {
-  const domains = await fetchDomains();
-  if (domains.length === 0) {
-    console.log(yellow("\n⚠️  Nessun dominio trovato.\n"));
-    return;
-  }
+  try {
+    const domains = await fetchDomains();
 
-  const table = new Table({
-    head: [
-      gray('STATO'),
-      orange.bold('DOMINIO'),
-      cyan('IP ATTUALE'),
-      gray('TTL'),
-      gray('ULTIMO UPDATE')
-    ],
-    style: { head: [], border: ['gray'] },
-    chars: {
-      'top': '─', 'top-mid': '┬', 'top-left': '┌', 'top-right': '┐',
-      'bottom': '─', 'bottom-mid': '┴', 'bottom-left': '└', 'bottom-right': '┘',
-      'left': '│', 'left-mid': '├', 'mid': '─', 'mid-mid': '┼',
-      'right': '│', 'right-mid': '┤', 'middle': '│'
+    if (showJson) {
+      console.log(JSON.stringify({ domains, count: domains.length }, null, 2));
+      return;
     }
-  });
 
-  domains.forEach(d => {
-    const status = d.currentIp ? green('● ONLINE') : red('● OFFLINE');
-    const lastUpdate = d.lastUpdated
-      ? new Date(d.lastUpdated).toLocaleString("it-IT", { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-      : gray('Mai');
+    if (domains.length === 0) {
+      console.log(yellow("\n⚠️  Nessun dominio trovato.\n"));
+      return;
+    }
 
-    table.push([
-      status,
-      chalk.bold(d.name),
-      d.currentIp || gray('N/D'),
-      `${d.ttl}s`,
-      lastUpdate
-    ]);
-  });
+    const table = new Table({
+      head: [
+        gray('STATO'),
+        orange.bold('DOMINIO'),
+        cyan('IP ATTUALE'),
+        gray('TTL'),
+        gray('ULTIMO UPDATE')
+      ],
+      style: { head: [], border: ['gray'] },
+      chars: {
+        'top': '─', 'top-mid': '┬', 'top-left': '┌', 'top-right': '┐',
+        'bottom': '─', 'bottom-mid': '┴', 'bottom-left': '└', 'bottom-right': '┘',
+        'left': '│', 'left-mid': '├', 'mid': '─', 'mid-mid': '┼',
+        'right': '│', 'right-mid': '┤', 'middle': '│'
+      }
+    });
 
-  console.log(`\n📋 ${chalk.bold('I tuoi domini')} (${domains.length})\n`);
-  console.log(table.toString());
-  console.log();
+    domains.forEach(d => {
+      const status = d.currentIp ? green('● ONLINE') : red('● OFFLINE');
+      const lastUpdate = d.lastUpdated
+        ? new Date(d.lastUpdated).toLocaleString("it-IT", { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : gray('Mai');
+
+      table.push([
+        status,
+        chalk.bold(d.name),
+        d.currentIp || gray('N/D'),
+        `${d.ttl}s`,
+        lastUpdate
+      ]);
+    });
+
+    console.log(`\n📋 ${chalk.bold('I tuoi domini')} (${domains.length})\n`);
+    console.log(table.toString());
+    console.log();
+  } catch (err) {
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
+  }
 };
 
 const addDomain = async (name) => {
@@ -316,33 +426,46 @@ const addDomain = async (name) => {
   const domainName = name || await promptInput(cyan("📝 Nome dominio (es. mioserver.apertodns.com): "));
 
   if (!domainName) {
-    console.log(red("Nome dominio richiesto."));
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Nome dominio richiesto" }));
+    } else {
+      console.log(red("Nome dominio richiesto."));
+    }
     return;
   }
 
-  const spin = spinner(`Creazione dominio ${domainName}...`).start();
+  const spin = !showJson ? spinner(`Creazione dominio ${domainName}...`).start() : null;
   try {
     const res = await fetch(`${API_BASE}/domains/standard`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
+        ...getAuthHeaders(token)
       },
       body: JSON.stringify({ name: domainName })
     });
     const data = await res.json();
 
     if (res.ok) {
-      spin.succeed(`Dominio "${domainName}" creato!`);
-      if (data.token) {
+      spin?.succeed(`Dominio "${domainName}" creato!`);
+
+      if (showJson) {
+        console.log(JSON.stringify({ success: true, domain: domainName, token: data.token }));
+      } else if (data.token) {
         console.log(yellow("\n🔐 Token generato:"), chalk.bold.white(data.token));
         console.log(gray("   (Salvalo subito, non sarà più visibile)\n"));
       }
     } else {
-      spin.fail(`Errore: ${data.error || data.message}`);
+      spin?.fail(`Errore: ${data.error || data.message}`);
+      if (showJson) {
+        console.log(JSON.stringify({ error: data.error || data.message }));
+      }
     }
   } catch (err) {
-    spin.fail(err.message);
+    spin?.fail(err.message);
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -353,7 +476,11 @@ const deleteDomain = async (name) => {
   let domainName = name;
   if (!domainName) {
     if (domains.length === 0) {
-      console.log(yellow("Nessun dominio da eliminare."));
+      if (showJson) {
+        console.log(JSON.stringify({ error: "Nessun dominio da eliminare" }));
+      } else {
+        console.log(yellow("Nessun dominio da eliminare."));
+      }
       return;
     }
     const { selected } = await inquirer.prompt([{
@@ -370,37 +497,52 @@ const deleteDomain = async (name) => {
 
   const domain = domains.find(d => d.name === domainName);
   if (!domain) {
-    console.log(red(`Dominio "${domainName}" non trovato.`));
+    if (showJson) {
+      console.log(JSON.stringify({ error: `Dominio "${domainName}" non trovato` }));
+    } else {
+      console.log(red(`Dominio "${domainName}" non trovato.`));
+    }
     return;
   }
 
-  const { confirm } = await inquirer.prompt([{
-    type: "confirm",
-    name: "confirm",
-    message: red(`⚠️  Eliminare definitivamente "${domainName}"?`),
-    default: false
-  }]);
+  if (!showJson) {
+    const { confirm } = await inquirer.prompt([{
+      type: "confirm",
+      name: "confirm",
+      message: red(`⚠️  Eliminare definitivamente "${domainName}"?`),
+      default: false
+    }]);
 
-  if (!confirm) {
-    console.log(gray("Operazione annullata."));
-    return;
+    if (!confirm) {
+      console.log(gray("Operazione annullata."));
+      return;
+    }
   }
 
-  const spin = spinner(`Eliminazione ${domainName}...`).start();
+  const spin = !showJson ? spinner(`Eliminazione ${domainName}...`).start() : null;
   try {
     const res = await fetch(`${API_BASE}/domains/${domain.id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders(token)
     });
 
     if (res.ok) {
-      spin.succeed(`Dominio "${domainName}" eliminato.`);
+      spin?.succeed(`Dominio "${domainName}" eliminato.`);
+      if (showJson) {
+        console.log(JSON.stringify({ success: true, deleted: domainName }));
+      }
     } else {
       const data = await res.json();
-      spin.fail(`Errore: ${data.error || data.message}`);
+      spin?.fail(`Errore: ${data.error || data.message}`);
+      if (showJson) {
+        console.log(JSON.stringify({ error: data.error || data.message }));
+      }
     }
   } catch (err) {
-    spin.fail(err.message);
+    spin?.fail(err.message);
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -413,46 +555,73 @@ const testDnsResolution = async (domain) => {
   // Validazione dominio per prevenire command injection
   const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-_.]+[a-zA-Z0-9]$/;
   if (!domainRegex.test(domainToTest) || domainToTest.includes('..')) {
-    console.log(red("\n❌ Nome dominio non valido.\n"));
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Nome dominio non valido" }));
+    } else {
+      console.log(red("\n❌ Nome dominio non valido.\n"));
+    }
     return;
   }
 
-  const spin = spinner(`Testing DNS per ${domainToTest}...`).start();
+  const spin = !showJson ? spinner(`Testing DNS per ${domainToTest}...`).start() : null;
 
   try {
     const { execFileSync } = await import('child_process');
     const result = execFileSync('dig', ['+short', domainToTest, 'A'], { encoding: 'utf-8' }).trim();
     const result6 = execFileSync('dig', ['+short', domainToTest, 'AAAA'], { encoding: 'utf-8' }).trim();
 
-    spin.stop();
-    console.log(`\n🔍 ${chalk.bold('Risultati DNS per')} ${cyan(domainToTest)}\n`);
-
-    const table = new Table({
-      style: { head: [], border: ['gray'] }
-    });
-
-    table.push(
-      [gray('Record A (IPv4)'), result || red('Non trovato')],
-      [gray('Record AAAA (IPv6)'), result6 || gray('Non configurato')]
-    );
-
-    console.log(table.toString());
-
     // Propagation check
-    console.log(`\n${gray('Propagazione DNS:')}`);
     const dnsServers = ['8.8.8.8', '1.1.1.1'];
+    const propagation = {};
+
     for (const dns of dnsServers) {
       try {
         const check = execFileSync('dig', ['+short', `@${dns}`, domainToTest, 'A'], { encoding: 'utf-8' }).trim();
-        console.log(`   ${dns}: ${check ? green('✓ ' + check) : red('✗ Non trovato')}`);
+        propagation[dns] = check || null;
       } catch {
-        console.log(`   ${dns}: ${red('✗ Errore')}`);
+        propagation[dns] = null;
       }
     }
-    console.log();
+
+    spin?.stop();
+
+    if (showJson) {
+      console.log(JSON.stringify({
+        domain: domainToTest,
+        records: {
+          A: result || null,
+          AAAA: result6 || null
+        },
+        propagation,
+        timestamp: new Date().toISOString()
+      }, null, 2));
+    } else {
+      console.log(`\n🔍 ${chalk.bold('Risultati DNS per')} ${cyan(domainToTest)}\n`);
+
+      const table = new Table({
+        style: { head: [], border: ['gray'] }
+      });
+
+      table.push(
+        [gray('Record A (IPv4)'), result || red('Non trovato')],
+        [gray('Record AAAA (IPv6)'), result6 || gray('Non configurato')]
+      );
+
+      console.log(table.toString());
+
+      console.log(`\n${gray('Propagazione DNS:')}`);
+      for (const [dns, ip] of Object.entries(propagation)) {
+        console.log(`   ${dns}: ${ip ? green('✓ ' + ip) : red('✗ Non trovato')}`);
+      }
+      console.log();
+    }
   } catch (err) {
-    spin.fail("Errore nel test DNS");
-    console.log(gray("   (Assicurati che 'dig' sia installato)\n"));
+    spin?.fail("Errore nel test DNS");
+    if (showJson) {
+      console.log(JSON.stringify({ error: "dig command not available or failed" }));
+    } else {
+      console.log(gray("   (Assicurati che 'dig' sia installato)\n"));
+    }
   }
 };
 
@@ -460,22 +629,28 @@ const testDnsResolution = async (domain) => {
 
 const fetchTokens = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento token...").start();
+  const spin = !showJson ? spinner("Caricamento token...").start() : null;
   try {
     const res = await fetch(`${API_BASE}/tokens`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders(token)
     });
-    spin.stop();
+    spin?.stop();
     if (!res.ok) throw new Error("Errore fetch token");
     return await res.json();
   } catch (err) {
-    spin.fail("Errore caricamento token");
+    spin?.fail("Errore caricamento token");
     return [];
   }
 };
 
 const showTokensList = async () => {
   const tokens = await fetchTokens();
+
+  if (showJson) {
+    console.log(JSON.stringify({ tokens, count: tokens.length }, null, 2));
+    return;
+  }
+
   if (tokens.length === 0) {
     console.log(yellow("\n⚠️  Nessun token trovato.\n"));
     return;
@@ -515,42 +690,328 @@ const showTokensList = async () => {
 const updateTokenState = async (tokenId, desiredState = null) => {
   const apiToken = await getAuthToken();
   if (!tokenId) {
-    console.error(red("Devi specificare un tokenId"));
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Token ID richiesto" }));
+    } else {
+      console.error(red("Devi specificare un tokenId"));
+    }
     return;
   }
 
   let finalState = desiredState;
   if (desiredState === null) {
-    const spin = spinner("Caricamento...").start();
+    const spin = !showJson ? spinner("Caricamento...").start() : null;
     const res = await fetch(`${API_BASE}/tokens`, {
-      headers: { Authorization: `Bearer ${apiToken}` }
+      headers: getAuthHeaders(apiToken)
     });
     const all = await res.json();
-    spin.stop();
+    spin?.stop();
 
     const token = all.find(t => t.id === parseInt(tokenId));
     if (!token) {
-      console.error(red(`Token ID ${tokenId} non trovato.`));
+      if (showJson) {
+        console.log(JSON.stringify({ error: `Token ID ${tokenId} non trovato` }));
+      } else {
+        console.error(red(`Token ID ${tokenId} non trovato.`));
+      }
       return;
     }
     finalState = !token.active;
   }
 
-  const spin = spinner(`${finalState ? 'Attivazione' : 'Disattivazione'} token...`).start();
+  const spin = !showJson ? spinner(`${finalState ? 'Attivazione' : 'Disattivazione'} token...`).start() : null;
   const res = await fetch(`${API_BASE}/tokens/${tokenId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiToken}`
+      ...getAuthHeaders(apiToken)
     },
     body: JSON.stringify({ active: finalState })
   });
 
   if (res.ok) {
-    spin.succeed(`Token ${tokenId} ${finalState ? green('attivato') : red('disattivato')}`);
+    spin?.succeed(`Token ${tokenId} ${finalState ? green('attivato') : red('disattivato')}`);
+    if (showJson) {
+      console.log(JSON.stringify({ success: true, tokenId, active: finalState }));
+    }
   } else {
     const data = await res.json();
-    spin.fail(`Errore: ${data.error || data.message}`);
+    spin?.fail(`Errore: ${data.error || data.message}`);
+    if (showJson) {
+      console.log(JSON.stringify({ error: data.error || data.message }));
+    }
+  }
+};
+
+// ==================== API KEYS ====================
+
+const fetchApiKeys = async () => {
+  const token = await getAuthToken();
+  const spin = !showJson ? spinner("Caricamento API keys...").start() : null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api-keys`, {
+      headers: getAuthHeaders(token)
+    });
+
+    spin?.stop();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Errore fetch API keys");
+    }
+    return await res.json();
+  } catch (err) {
+    spin?.fail("Errore caricamento API keys");
+    throw err;
+  }
+};
+
+const showApiKeysList = async () => {
+  try {
+    const keys = await fetchApiKeys();
+
+    if (showJson) {
+      console.log(JSON.stringify({ apiKeys: keys, count: keys.length }, null, 2));
+      return;
+    }
+
+    if (keys.length === 0) {
+      console.log(yellow("\n⚠️  Nessuna API key trovata.\n"));
+      return;
+    }
+
+    const table = new Table({
+      head: [gray('STATO'), blue.bold('NOME'), gray('PREFIX'), gray('SCOPES'), gray('RATE'), gray('SCADENZA')],
+      style: { head: [], border: ['gray'] }
+    });
+
+    keys.forEach(k => {
+      const status = k.active !== false ? green('● ON') : red('● OFF');
+      const scopes = k.scopes?.length > 3 ? `${k.scopes.length} scopes` : k.scopes?.join(', ') || 'N/D';
+      const expires = k.expiresAt ? new Date(k.expiresAt).toLocaleDateString('it-IT') : gray('Mai');
+      table.push([status, chalk.bold(k.name), gray(k.keyPrefix + '...'), scopes, `${k.rateLimit}/h`, expires]);
+    });
+
+    console.log(`\n🔐 ${chalk.bold('API Keys')} (${keys.length})\n`);
+    console.log(table.toString());
+    console.log();
+  } catch (err) {
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
+  }
+};
+
+const showScopesCommand = async () => {
+  const token = await getAuthToken();
+  const spin = !showJson ? spinner("Caricamento scopes...").start() : null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api-keys/scopes`, {
+      headers: getAuthHeaders(token)
+    });
+
+    spin?.stop();
+
+    if (!res.ok) throw new Error("Errore fetch scopes");
+    const data = await res.json();
+
+    if (showJson) {
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
+    console.log(`\n📋 ${chalk.bold('Scopes API disponibili')}\n`);
+
+    if (data.groups) {
+      for (const [groupName, scopes] of Object.entries(data.groups)) {
+        console.log(`\n${orange.bold(groupName.toUpperCase())}`);
+        for (const scope of scopes) {
+          const info = data.scopes?.[scope] || {};
+          console.log(`   ${cyan(scope.padEnd(25))} ${gray(info.description || '')}`);
+        }
+      }
+    } else if (data.scopes) {
+      for (const [scope, info] of Object.entries(data.scopes)) {
+        console.log(`   ${cyan(scope.padEnd(25))} ${gray(info.description || '')}`);
+      }
+    }
+    console.log();
+  } catch (err) {
+    spin?.fail("Errore caricamento scopes");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
+  }
+};
+
+const createApiKey = async (name) => {
+  const token = await getAuthToken();
+  const keyName = name || await promptInput(cyan("📝 Nome API key: "));
+
+  if (!keyName) {
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Nome richiesto" }));
+    } else {
+      console.log(red("Nome richiesto."));
+    }
+    return;
+  }
+
+  // Seleziona scopes
+  let selectedScopes = ['domains:read'];
+
+  if (!showJson) {
+    // Fetch available scopes
+    try {
+      const scopesRes = await fetch(`${API_BASE}/api-keys/scopes`, {
+        headers: getAuthHeaders(token)
+      });
+      const scopesData = await scopesRes.json();
+
+      if (scopesData.scopes) {
+        const scopeChoices = Object.entries(scopesData.scopes).map(([scope, info]) => ({
+          name: `${scope} - ${info.description || ''}`,
+          value: scope,
+          checked: scope === 'domains:read'
+        }));
+
+        const { scopes } = await inquirer.prompt([{
+          type: "checkbox",
+          name: "scopes",
+          message: "Seleziona gli scopes:",
+          choices: scopeChoices,
+          validate: (answer) => answer.length > 0 || 'Seleziona almeno uno scope'
+        }]);
+        selectedScopes = scopes;
+      }
+    } catch {
+      // Use default scopes
+    }
+  }
+
+  const spin = !showJson ? spinner(`Creazione API key "${keyName}"...`).start() : null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api-keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(token)
+      },
+      body: JSON.stringify({
+        name: keyName,
+        scopes: selectedScopes,
+        rateLimit: 1000
+      })
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      spin?.succeed(`API key "${keyName}" creata!`);
+
+      if (showJson) {
+        console.log(JSON.stringify({
+          success: true,
+          apiKey: {
+            id: data.apiKey.id,
+            name: data.apiKey.name,
+            key: data.apiKey.key,
+            keyPrefix: data.apiKey.keyPrefix,
+            scopes: data.apiKey.scopes
+          }
+        }, null, 2));
+      } else {
+        console.log(yellow("\n🔐 API Key generata:"));
+        console.log(chalk.bold.white(`   ${data.apiKey.key}`));
+        console.log(red("\n   ⚠️  IMPORTANTE: Salva questa chiave ora!"));
+        console.log(gray("   Non sarà più visibile dopo questa schermata.\n"));
+        console.log(gray(`   Scopes: ${data.apiKey.scopes?.join(', ')}`));
+        console.log(gray(`   Prefix: ${data.apiKey.keyPrefix}...`));
+        console.log();
+      }
+    } else {
+      spin?.fail(`Errore: ${data.error || data.message}`);
+      if (showJson) {
+        console.log(JSON.stringify({ error: data.error || data.message }));
+      }
+    }
+  } catch (err) {
+    spin?.fail(err.message);
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
+  }
+};
+
+const deleteApiKey = async (keyId) => {
+  const token = await getAuthToken();
+
+  if (!keyId) {
+    // Interactive selection
+    const keys = await fetchApiKeys();
+    if (keys.length === 0) {
+      if (showJson) {
+        console.log(JSON.stringify({ error: "Nessuna API key da eliminare" }));
+      } else {
+        console.log(yellow("Nessuna API key da eliminare."));
+      }
+      return;
+    }
+
+    const { selected } = await inquirer.prompt([{
+      type: "list",
+      name: "selected",
+      message: "Quale API key vuoi eliminare?",
+      choices: keys.map(k => ({
+        name: `${k.name} (${k.keyPrefix}...)`,
+        value: k.id
+      }))
+    }]);
+    keyId = selected;
+  }
+
+  if (!showJson) {
+    const { confirm } = await inquirer.prompt([{
+      type: "confirm",
+      name: "confirm",
+      message: red(`⚠️  Eliminare definitivamente questa API key?`),
+      default: false
+    }]);
+
+    if (!confirm) {
+      console.log(gray("Operazione annullata."));
+      return;
+    }
+  }
+
+  const spin = !showJson ? spinner(`Eliminazione API key...`).start() : null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api-keys/${keyId}`, {
+      method: "DELETE",
+      headers: getAuthHeaders(token)
+    });
+
+    if (res.ok) {
+      spin?.succeed("API key eliminata.");
+      if (showJson) {
+        console.log(JSON.stringify({ success: true, deleted: keyId }));
+      }
+    } else {
+      const data = await res.json();
+      spin?.fail(`Errore: ${data.error || data.message}`);
+      if (showJson) {
+        console.log(JSON.stringify({ error: data.error || data.message }));
+      }
+    }
+  } catch (err) {
+    spin?.fail(err.message);
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -558,20 +1019,34 @@ const updateTokenState = async (tokenId, desiredState = null) => {
 
 const showStatsCommand = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento statistiche...").start();
+  const spin = !showJson ? spinner("Caricamento statistiche...").start() : null;
 
   try {
     const [domainsRes, tokensRes, statsRes] = await Promise.all([
-      fetch(`${API_BASE}/domains`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/tokens`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/stats/daily?days=7`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+      fetch(`${API_BASE}/domains`, { headers: getAuthHeaders(token) }),
+      fetch(`${API_BASE}/tokens`, { headers: getAuthHeaders(token) }),
+      fetch(`${API_BASE}/stats/daily?days=7`, { headers: getAuthHeaders(token) }).catch(() => null)
     ]);
 
     const domains = await domainsRes.json();
     const tokens = await tokensRes.json();
     const stats = statsRes?.ok ? await statsRes.json() : [];
 
-    spin.stop();
+    spin?.stop();
+
+    if (showJson) {
+      console.log(JSON.stringify({
+        summary: {
+          totalDomains: domains.length,
+          onlineDomains: domains.filter(d => d.currentIp).length,
+          totalTokens: tokens.length,
+          activeTokens: tokens.filter(t => t.active).length
+        },
+        dailyStats: stats,
+        timestamp: new Date().toISOString()
+      }, null, 2));
+      return;
+    }
 
     console.log(`\n📊 ${chalk.bold('Statistiche ApertoDNS')}\n`);
 
@@ -607,7 +1082,10 @@ const showStatsCommand = async () => {
 
     console.log();
   } catch (err) {
-    spin.fail("Errore caricamento statistiche");
+    spin?.fail("Errore caricamento statistiche");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -615,18 +1093,23 @@ const showStatsCommand = async () => {
 
 const showLogsCommand = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento log...").start();
+  const spin = !showJson ? spinner("Caricamento log...").start() : null;
 
   try {
     const res = await fetch(`${API_BASE}/logs?limit=10`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders(token)
     });
 
     if (!res.ok) throw new Error("Errore fetch logs");
     const data = await res.json();
     const logs = data.logs || data;
 
-    spin.stop();
+    spin?.stop();
+
+    if (showJson) {
+      console.log(JSON.stringify({ logs, count: logs.length }, null, 2));
+      return;
+    }
 
     if (logs.length === 0) {
       console.log(yellow("\n⚠️  Nessun log recente.\n"));
@@ -648,7 +1131,10 @@ const showLogsCommand = async () => {
 
     console.log();
   } catch (err) {
-    spin.fail("Errore caricamento log");
+    spin?.fail("Errore caricamento log");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -656,17 +1142,22 @@ const showLogsCommand = async () => {
 
 const showWebhooksList = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento webhook...").start();
+  const spin = !showJson ? spinner("Caricamento webhook...").start() : null;
 
   try {
     const res = await fetch(`${API_BASE}/webhooks`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: getAuthHeaders(token)
     });
 
     if (!res.ok) throw new Error("Errore fetch webhooks");
     const webhooks = await res.json();
 
-    spin.stop();
+    spin?.stop();
+
+    if (showJson) {
+      console.log(JSON.stringify({ webhooks, count: webhooks.length }, null, 2));
+      return;
+    }
 
     if (webhooks.length === 0) {
       console.log(yellow("\n⚠️  Nessun webhook configurato.\n"));
@@ -688,47 +1179,10 @@ const showWebhooksList = async () => {
     console.log(table.toString());
     console.log();
   } catch (err) {
-    spin.fail("Errore caricamento webhooks");
-  }
-};
-
-// ==================== API KEYS ====================
-
-const showApiKeysList = async () => {
-  const token = await getAuthToken();
-  const spin = spinner("Caricamento API keys...").start();
-
-  try {
-    const res = await fetch(`${API_BASE}/api-keys`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (!res.ok) throw new Error("Errore fetch API keys");
-    const keys = await res.json();
-
-    spin.stop();
-
-    if (keys.length === 0) {
-      console.log(yellow("\n⚠️  Nessuna API key trovata.\n"));
-      return;
+    spin?.fail("Errore caricamento webhooks");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
     }
-
-    const table = new Table({
-      head: [gray('STATO'), blue.bold('NOME'), gray('PREFIX'), gray('SCOPES'), gray('RATE')],
-      style: { head: [], border: ['gray'] }
-    });
-
-    keys.forEach(k => {
-      const status = k.active ? green('● ON') : red('● OFF');
-      const scopes = k.scopes?.length > 3 ? `${k.scopes.length} scopes` : k.scopes?.join(', ') || 'N/D';
-      table.push([status, chalk.bold(k.name), gray(k.keyPrefix + '...'), scopes, `${k.rateLimit}/h`]);
-    });
-
-    console.log(`\n🔐 ${chalk.bold('API Keys')} (${keys.length})\n`);
-    console.log(table.toString());
-    console.log();
-  } catch (err) {
-    spin.fail("Errore caricamento API keys");
   }
 };
 
@@ -736,26 +1190,43 @@ const showApiKeysList = async () => {
 
 const showDashboardCommand = async () => {
   const token = await getAuthToken();
-  const spin = spinner("Caricamento dashboard...").start();
+  const spin = !showJson ? spinner("Caricamento dashboard...").start() : null;
 
   try {
     const [domainsRes, tokensRes, ipRes] = await Promise.all([
-      fetch(`${API_BASE}/domains`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/tokens`, { headers: { Authorization: `Bearer ${token}` } }),
-      getCurrentIP('https://api.ipify.org').catch(() => 'N/D')
+      fetch(`${API_BASE}/domains`, { headers: getAuthHeaders(token) }),
+      fetch(`${API_BASE}/tokens`, { headers: getAuthHeaders(token) }),
+      getCurrentIP('https://api.ipify.org').catch(() => null)
     ]);
 
     const domains = await domainsRes.json();
     const tokens = await tokensRes.json();
 
-    spin.stop();
+    spin?.stop();
+
+    if (showJson) {
+      console.log(JSON.stringify({
+        currentIp: ipRes?.trim() || null,
+        domains: {
+          total: domains.length,
+          online: domains.filter(d => d.currentIp).length,
+          list: domains.map(d => ({ name: d.name, ip: d.currentIp, lastUpdated: d.lastUpdated }))
+        },
+        tokens: {
+          total: tokens.length,
+          active: tokens.filter(t => t.active).length
+        },
+        timestamp: new Date().toISOString()
+      }, null, 2));
+      return;
+    }
 
     console.log(`\n${orange.bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')}`);
     console.log(`${orange.bold('                         DASHBOARD                           ')}`);
     console.log(`${orange.bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')}\n`);
 
     // Current IP
-    console.log(`  🌐 ${gray('IP Attuale:')} ${green.bold(ipRes)}`);
+    console.log(`  🌐 ${gray('IP Attuale:')} ${green.bold(ipRes?.trim() || 'N/D')}`);
     console.log();
 
     // Stats row
@@ -783,7 +1254,10 @@ const showDashboardCommand = async () => {
     console.log(`  ${gray('Usa')} ${cyan('--help')} ${gray('per vedere tutti i comandi disponibili')}`);
     console.log();
   } catch (err) {
-    spin.fail("Errore caricamento dashboard");
+    spin?.fail("Errore caricamento dashboard");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
@@ -858,14 +1332,14 @@ const setup = async () => {
 
   if (save) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-    console.log(green(`\n✅ Configurazione salvata!`));
-    console.log(yellow("⚠️  Non condividere config.json - contiene il tuo token.\n"));
+    console.log(green(`\n✅ Configurazione salvata in ${CONFIG_PATH}`));
+    console.log(yellow("⚠️  Non condividere questo file - contiene il tuo token.\n"));
   }
 };
 
 const verifyToken = async () => {
   const apiToken = await promptInput(cyan("🔍 Token da verificare: "));
-  const spin = spinner("Verifica in corso...").start();
+  const spin = !showJson ? spinner("Verifica in corso...").start() : null;
 
   try {
     const res = await fetch(`${API_BASE}/tokens/verify`, {
@@ -876,31 +1350,57 @@ const verifyToken = async () => {
     const data = await res.json();
 
     if (data.valid) {
-      spin.succeed("Token valido!");
-      console.log(`   ${gray('Etichetta:')} ${data.label}`);
-      console.log(`   ${gray('Creato:')} ${new Date(data.createdAt).toLocaleString("it-IT")}\n`);
+      spin?.succeed("Token valido!");
+
+      if (showJson) {
+        console.log(JSON.stringify({ valid: true, ...data }));
+      } else {
+        console.log(`   ${gray('Etichetta:')} ${data.label}`);
+        console.log(`   ${gray('Creato:')} ${new Date(data.createdAt).toLocaleString("it-IT")}\n`);
+      }
     } else {
-      spin.fail("Token non valido");
+      spin?.fail("Token non valido");
+      if (showJson) {
+        console.log(JSON.stringify({ valid: false }));
+      }
     }
   } catch (err) {
-    spin.fail("Errore nella verifica");
+    spin?.fail("Errore nella verifica");
+    if (showJson) {
+      console.log(JSON.stringify({ error: err.message }));
+    }
   }
 };
 
 const showCurrentStatus = async () => {
   const cliToken = await getCliToken();
-  const spin = spinner("Caricamento stato...").start();
+  const spin = !showJson ? spinner("Caricamento stato...").start() : null;
 
   const remote = await fetchRemoteConfig(cliToken);
   if (!remote) {
-    spin.fail("Impossibile caricare la configurazione");
+    spin?.fail("Impossibile caricare la configurazione");
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Configurazione non trovata" }));
+    }
     return;
   }
 
   const currentIP = await getCurrentIP(remote.ipService).catch(() => null);
   const lastIP = loadLastIP();
 
-  spin.stop();
+  spin?.stop();
+
+  if (showJson) {
+    console.log(JSON.stringify({
+      domain: remote.domain,
+      ttl: remote.ttl,
+      currentIp: currentIP?.trim() || null,
+      lastKnownIp: lastIP || null,
+      ipv6Enabled: remote.useIPv6,
+      ipService: remote.ipService
+    }, null, 2));
+    return;
+  }
 
   console.log(`\n📊 ${chalk.bold('Stato Attuale')}\n`);
 
@@ -908,7 +1408,7 @@ const showCurrentStatus = async () => {
   table.push(
     [gray('Dominio'), cyan.bold(remote.domain)],
     [gray('TTL'), `${remote.ttl}s`],
-    [gray('IP Attuale'), green.bold(currentIP || 'N/D')],
+    [gray('IP Attuale'), green.bold(currentIP?.trim() || 'N/D')],
     [gray('Ultimo IP'), lastIP || gray('N/D')],
     [gray('IPv6'), remote.useIPv6 ? green('Attivo') : gray('Disattivo')]
   );
@@ -936,7 +1436,7 @@ const editConfig = async () => {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiToken}`
+      ...getAuthHeaders(apiToken)
     },
     body: JSON.stringify({
       ttl: parseInt(answers.ttl),
@@ -961,30 +1461,40 @@ const runUpdate = async () => {
     apiToken = await promptInput(cyan("🔑 Token API: "));
     const remoteConfig = await fetchRemoteConfig(apiToken);
     if (!remoteConfig) {
-      console.log(red("Configurazione non trovata."));
+      if (showJson) {
+        console.log(JSON.stringify({ error: "Configurazione non trovata" }));
+      } else {
+        console.log(red("Configurazione non trovata."));
+      }
       return;
     }
     config = { ...remoteConfig, apiToken };
   }
 
-  const spin = spinner("Rilevamento IP...").start();
+  const spin = !showJson ? spinner("Rilevamento IP...").start() : null;
   const currentIP = await getCurrentIP(config.ipService).catch(() => null);
   const currentIPv6 = config.useIPv6 ? await getCurrentIPv6(config.ipv6Service).catch(() => null) : null;
 
   if (!currentIP && !currentIPv6) {
-    spin.fail("Nessun IP rilevato");
+    spin?.fail("Nessun IP rilevato");
+    if (showJson) {
+      console.log(JSON.stringify({ error: "Nessun IP rilevato" }));
+    }
     return;
   }
 
-  spin.text = `IP rilevato: ${currentIP}`;
+  if (spin) spin.text = `IP rilevato: ${currentIP}`;
 
   const lastIP = loadLastIP();
   if (!forceUpdate && lastIP === currentIP) {
-    spin.succeed(`IP invariato (${currentIP})`);
+    spin?.succeed(`IP invariato (${currentIP})`);
+    if (showJson) {
+      console.log(JSON.stringify({ status: "unchanged", ip: currentIP }));
+    }
     return;
   }
 
-  spin.text = `Aggiornamento DNS per ${config.domain}...`;
+  if (spin) spin.text = `Aggiornamento DNS per ${config.domain}...`;
 
   const body = {
     name: config.domain,
@@ -1005,10 +1515,92 @@ const runUpdate = async () => {
   const data = await res.json();
   if (res.ok && data.results) {
     saveCurrentIP(currentIP);
-    spin.succeed(`DNS aggiornato! ${config.domain} → ${currentIP}`);
-    if (showJson) console.log(JSON.stringify(data.results[0], null, 2));
+    spin?.succeed(`DNS aggiornato! ${config.domain} → ${currentIP}`);
+    if (showJson) {
+      console.log(JSON.stringify({
+        status: "updated",
+        domain: config.domain,
+        ip: currentIP,
+        previousIp: lastIP,
+        result: data.results[0]
+      }, null, 2));
+    }
   } else {
-    spin.fail(`Errore: ${data.error || data.details}`);
+    spin?.fail(`Errore: ${data.error || data.details}`);
+    if (showJson) {
+      console.log(JSON.stringify({ error: data.error || data.details }));
+    }
+  }
+};
+
+// ==================== DAEMON MODE ====================
+
+const runDaemonMode = async () => {
+  console.log(cyan(`\n🔄 Avvio daemon mode (intervallo: ${daemonInterval}s)\n`));
+  console.log(gray("   Premi Ctrl+C per terminare\n"));
+
+  const update = async () => {
+    const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+
+    try {
+      const currentIP = await getCurrentIP(config.ipService || 'https://api.ipify.org').catch(() => null);
+      const lastIP = loadLastIP();
+
+      if (lastIP === currentIP) {
+        console.log(`${gray(`[${timestamp}]`)} ${gray('IP invariato')} ${currentIP}`);
+      } else {
+        console.log(`${gray(`[${timestamp}]`)} ${yellow('IP cambiato!')} ${lastIP || 'N/D'} → ${green(currentIP)}`);
+
+        // Trigger update
+        if (config.apiToken && config.domain) {
+          const body = { name: config.domain, ip: currentIP, ttl: config.ttl || 300 };
+
+          const res = await fetch(`${API_BASE}/update-dns`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${config.apiToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (res.ok) {
+            saveCurrentIP(currentIP);
+            console.log(`${gray(`[${timestamp}]`)} ${green('✓ DNS aggiornato')}`);
+          } else {
+            const data = await res.json();
+            console.log(`${gray(`[${timestamp}]`)} ${red('✗ Errore:')} ${data.error || data.details}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`${gray(`[${timestamp}]`)} ${red('Errore:')} ${err.message}`);
+    }
+  };
+
+  // Initial update
+  await update();
+
+  // Schedule updates
+  setInterval(update, daemonInterval * 1000);
+};
+
+// ==================== LOGOUT ====================
+
+const runLogout = async () => {
+  if (fs.existsSync(CONFIG_PATH)) {
+    fs.unlinkSync(CONFIG_PATH);
+    if (showJson) {
+      console.log(JSON.stringify({ success: true, message: "Configurazione rimossa" }));
+    } else {
+      console.log(green("\n✅ Configurazione rimossa.\n"));
+    }
+  } else {
+    if (showJson) {
+      console.log(JSON.stringify({ success: true, message: "Nessuna configurazione trovata" }));
+    } else {
+      console.log(yellow("\n⚠️  Nessuna configurazione trovata.\n"));
+    }
   }
 };
 
@@ -1033,16 +1625,21 @@ const interactiveMode = async () => {
         new inquirer.Separator(gray('─── Token ───')),
         { name: `${purple('🔑')} Lista token`, value: "tokens" },
         { name: `${yellow('🔄')} Toggle token`, value: "toggle-token" },
+        new inquirer.Separator(gray('─── API Keys ───')),
+        { name: `${blue('🔐')} Lista API keys`, value: "api-keys" },
+        { name: `${green('➕')} Crea API key`, value: "create-api-key" },
+        { name: `${red('🗑️ ')} Elimina API key`, value: "delete-api-key" },
         new inquirer.Separator(gray('─── Altro ───')),
         { name: `${cyan('📈')} Statistiche`, value: "stats" },
         { name: `${gray('📜')} Log attività`, value: "logs" },
         { name: `${purple('🔗')} Webhooks`, value: "webhooks" },
-        { name: `${blue('🔐')} API Keys`, value: "api-keys" },
+        { name: `${cyan('🌐')} Il mio IP`, value: "my-ip" },
         new inquirer.Separator(gray('─── Config ───')),
         { name: `${gray('📊')} Stato attuale`, value: "status" },
         { name: `${green('🔄')} Aggiorna DNS`, value: "update" },
         { name: `${yellow('⚙️ ')} Configurazione`, value: "config" },
         { name: `${blue('🔧')} Setup`, value: "setup" },
+        { name: `${red('🚪')} Logout`, value: "logout" },
         new inquirer.Separator(),
         { name: red("❌ Esci"), value: "exit" }
       ]
@@ -1074,14 +1671,18 @@ const interactiveMode = async () => {
         }]);
         await updateTokenState(tokenId, null);
         break;
+      case "api-keys": await showApiKeysList(); break;
+      case "create-api-key": await createApiKey(); break;
+      case "delete-api-key": await deleteApiKey(); break;
       case "stats": await showStatsCommand(); break;
       case "logs": await showLogsCommand(); break;
       case "webhooks": await showWebhooksList(); break;
-      case "api-keys": await showApiKeysList(); break;
+      case "my-ip": await showMyIpCommand(); break;
       case "status": await showCurrentStatus(); break;
       case "update": await runUpdate(); break;
       case "config": await editConfig(); break;
       case "setup": await setup(); break;
+      case "logout": await runLogout(); break;
       case "exit":
         console.log(gray("Arrivederci! 👋\n"));
         process.exit(0);
@@ -1095,7 +1696,10 @@ const interactiveMode = async () => {
 
 const main = async () => {
   try {
-    if (enableTokenId) await updateTokenState(enableTokenId, true);
+    if (logout) await runLogout();
+    else if (showMyIp) await showMyIpCommand();
+    else if (runDaemon) await runDaemonMode();
+    else if (enableTokenId) await updateTokenState(enableTokenId, true);
     else if (disableTokenId) await updateTokenState(disableTokenId, false);
     else if (toggleTokenId) await updateTokenState(toggleTokenId, null);
     else if (showDashboard) await showDashboardCommand();
@@ -1108,6 +1712,9 @@ const main = async () => {
     else if (showLogs) await showLogsCommand();
     else if (listWebhooks) await showWebhooksList();
     else if (listApiKeys) await showApiKeysList();
+    else if (createApiKeyArg) await createApiKey(createApiKeyArg);
+    else if (deleteApiKeyArg) await deleteApiKey(deleteApiKeyArg);
+    else if (showScopes) await showScopesCommand();
     else if (runSetup) await setup();
     else if (runVerify) await verifyToken();
     else if (showStatus) await showCurrentStatus();
@@ -1116,7 +1723,11 @@ const main = async () => {
     else await runUpdate();
   } catch (err) {
     if (err.message !== 'User force closed the prompt') {
-      console.error(red("\n❌ Errore:"), err.message);
+      if (showJson) {
+        console.log(JSON.stringify({ error: err.message }));
+      } else {
+        console.error(red("\n❌ Errore:"), err.message);
+      }
     }
     process.exit(1);
   }

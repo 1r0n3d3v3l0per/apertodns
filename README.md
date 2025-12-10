@@ -1,31 +1,65 @@
-# ApertoDNS
+# ApertoDNS CLI
 
 [![npm version](https://img.shields.io/npm/v/apertodns.svg)](https://www.npmjs.com/package/apertodns)
-[![license](https://img.shields.io/npm/l/apertodns.svg)](https://github.com/apertonetwork/apertodns/blob/main/LICENSE)
+[![npm downloads](https://img.shields.io/npm/dm/apertodns.svg)](https://www.npmjs.com/package/apertodns)
+[![license](https://img.shields.io/npm/l/apertodns.svg)](https://github.com/1r0n3d3v3l0per/apertodns/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/apertodns.svg)](https://nodejs.org)
 
-**Dynamic DNS management from your terminal.** Manage domains, tokens, and DNS updates with style.
+**Dynamic DNS management from your terminal.** Manage domains, tokens, API keys, and DNS updates with style.
 
-ApertoDNS is a free Dynamic DNS service that lets you point a subdomain to your dynamic IP address. Perfect for home servers, IoT devices, game servers, and remote access.
+ApertoDNS is a free Dynamic DNS service that lets you point a subdomain to your dynamic IP address. Perfect for home servers, IoT devices, game servers, NAS systems, and remote access.
+
+<p align="center">
+  <img src="https://apertodns.com/cli-demo.gif" alt="ApertoDNS CLI Demo" width="600">
+</p>
+
+## Why ApertoDNS?
+
+| Feature | ApertoDNS | No-IP | DuckDNS | Dynu |
+|---------|-----------|-------|---------|------|
+| Free subdomains | Unlimited | 1 (free) | 5 | 4 |
+| API Keys with scopes | Yes | No | No | Limited |
+| CLI tool | Yes | No | No | No |
+| IPv6 support | Yes | Paid | Yes | Yes |
+| No forced renewal | Yes | 30 days | Yes | Yes |
+| DynDNS2 compatible | Yes | Yes | No | Yes |
+| Webhooks | Yes | No | No | No |
+| Team sharing | Yes | No | No | No |
 
 ## Features
 
 - **Easy Setup** - Login or register directly from CLI
 - **Multiple Domains** - Manage unlimited subdomains
-- **Auto Updates** - Set up cron for automatic IP updates
+- **API Keys** - Create and manage API keys with granular scopes
+- **Auto Updates** - Set up cron or daemon mode for automatic IP updates
 - **Interactive Mode** - Beautiful terminal UI with menus
+- **JSON Output** - Machine-readable output for scripting
 - **IPv4 & IPv6** - Full dual-stack support
 - **Real-time Stats** - View usage statistics and logs
+- **Router/NAS Compatible** - Works with Synology, QNAP, and DynDNS2-compatible routers
 
 ## Requirements
 
 - Node.js 18.0.0 or higher
-- An ApertoDNS account ([register free](https://apertodns.com))
+- An ApertoDNS account ([register free](https://apertodns.com/register))
 
 ## Installation
 
 ```bash
+# npm
 npm install -g apertodns
+
+# yarn
+yarn global add apertodns
+
+# pnpm
+pnpm add -g apertodns
+```
+
+Or use without installing:
+
+```bash
+npx apertodns --help
 ```
 
 ## Quick Start
@@ -55,6 +89,7 @@ apertodns --force
 | `--tokens` | List all your tokens |
 | `--stats` | Statistics and metrics |
 | `--logs` | Recent activity logs |
+| `--my-ip` | Show your current public IP |
 
 ### Domain Management
 
@@ -73,14 +108,42 @@ apertodns --force
 | `--toggle <id>` | Toggle token state |
 | `--verify` | Verify token validity |
 
+### API Keys
+
+| Command | Description |
+|---------|-------------|
+| `--api-keys` | List all API keys |
+| `--create-api-key <name>` | Create new API key |
+| `--delete-api-key <id>` | Delete an API key |
+| `--scopes` | Show available scopes |
+| `--api-key <key>` | Use API key for authentication |
+
 ### Configuration
 
 | Command | Description |
 |---------|-------------|
 | `--setup` | Guided setup (login/register) |
 | `--status` | Show current status and IP |
+| `--config` | Edit configuration |
+| `--logout` | Remove local configuration |
 | `--force` | Force DNS update now |
+
+### Daemon Mode
+
+| Command | Description |
+|---------|-------------|
+| `--daemon` | Start daemon mode (continuous updates) |
+| `--interval <sec>` | Update interval (default: 300s) |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
 | `--cron` | Silent mode for cron jobs |
+| `--quiet` | Hide banner |
+| `--json` | JSON output (machine-readable) |
+| `-v, --version` | Show version |
+| `-h, --help` | Show help |
 
 ## Interactive Mode
 
@@ -88,6 +151,41 @@ Run `apertodns` without arguments for an interactive menu with all options.
 
 ```bash
 apertodns
+```
+
+## Authentication Methods
+
+You can authenticate in 3 ways:
+
+1. **Interactive Login** - Run `apertodns --setup` (saves JWT to ~/.config/apertodns/)
+2. **API Key** - Use `--api-key <key>` for single operations
+3. **Environment Variable** - Set `APERTODNS_API_KEY`
+
+## JSON Output
+
+All commands support `--json` flag for machine-readable output:
+
+```bash
+# Get domains as JSON
+apertodns --domains --json
+
+# Get your IP as JSON
+apertodns --my-ip --json
+
+# Combine with API key for scripting
+apertodns --api-key ak_xxx... --domains --json
+```
+
+## Daemon Mode
+
+Run continuously to keep your DNS updated:
+
+```bash
+# Default interval (5 minutes)
+apertodns --daemon
+
+# Custom interval (60 seconds)
+apertodns --daemon --interval 60
 ```
 
 ## Automatic Updates (Cron)
@@ -111,16 +209,103 @@ ApertoDNS is compatible with routers that support DynDNS2 protocol:
 ```
 Server: api.apertodns.com
 Protocol: DynDNS2
+Path: /nic/update
 Username: your-token
 Password: your-token
 Hostname: yourdomain.apertodns.com
+```
+
+### Compatible Devices
+
+- **Routers**: ASUS, TP-Link, Netgear, Ubiquiti, pfSense, OPNsense, DD-WRT, OpenWRT
+- **NAS**: Synology DSM, QNAP QTS, TrueNAS
+- **Other**: Any device supporting DynDNS2/DynDNS protocol
+
+## Configuration Storage
+
+Configuration is stored in platform-specific locations:
+
+- **Linux**: `~/.config/apertodns/` or `~/.apertodns/`
+- **macOS**: `~/.config/apertodns/`
+- **Windows**: `%APPDATA%\apertodns\`
+
+## Troubleshooting
+
+### Common Issues
+
+**"Unable to detect IP address"**
+- Check your internet connection
+- Try a different IP detection service: the CLI automatically tries multiple fallbacks
+- If behind a corporate proxy, the detected IP may be the proxy's IP
+
+**"Authentication failed"**
+- Run `apertodns --logout` then `apertodns --setup` to re-authenticate
+- If using API key, verify it has the required scopes
+- Check if the token/API key is still active in your dashboard
+
+**"DNS not updating"**
+- Use `apertodns --force` to force an immediate update
+- Check `apertodns --status` to see current IP vs DNS IP
+- DNS propagation can take up to 5 minutes
+
+**IPv6 not working**
+- IPv6 requires your ISP and network to support it
+- Use `apertodns --my-ip --json` to check if IPv6 is detected
+- Some networks only provide IPv4
+
+**Permission denied on Linux**
+- If installed globally, you may need sudo: `sudo npm install -g apertodns`
+- Or use a Node version manager (nvm) to avoid permission issues
+
+**Daemon mode exits unexpectedly**
+- Check logs in `/var/log/apertodns.log` if using cron
+- Ensure stable internet connection
+- Consider using a process manager like PM2 or systemd
+
+### Getting Help
+
+```bash
+# Show all commands
+apertodns --help
+
+# Check current status
+apertodns --status
+
+# Verify authentication
+apertodns --verify
+```
+
+## Security
+
+- Credentials are stored locally, never transmitted except to ApertoDNS servers
+- API keys support granular scopes for least-privilege access
+- All API communication uses HTTPS
+- No cross-account data access - strict user isolation
+
+## Examples
+
+```bash
+# Quick status check
+apertodns --status
+
+# Test DNS propagation
+apertodns --test myserver.apertodns.com
+
+# Create domain and get token
+apertodns --add-domain newserver.apertodns.com
+
+# List domains as JSON
+apertodns --domains --json
+
+# Use API key for automation
+APERTODNS_API_KEY=ak_xxx... apertodns --domains --json
 ```
 
 ## Links
 
 - **Website**: [apertodns.com](https://apertodns.com)
 - **Dashboard**: [apertodns.com/dashboard](https://apertodns.com/dashboard)
-- **API Docs**: [apertodns.com/docs](https://apertodns.com/docs)
+- **Documentation**: [apertodns.com/docs](https://apertodns.com/docs)
 - **Issues**: [GitHub Issues](https://github.com/1r0n3d3v3l0per/apertodns/issues)
 
 ## Support
