@@ -1300,18 +1300,19 @@ const setup = async () => {
     ]);
 
     const spin = spinner("Login in corso...").start();
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await fetch(`${API_BASE}/auth/cli-login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
     });
     const data = await res.json();
 
-    if (!res.ok || !data.cliToken) {
-      spin.fail("Login fallito: " + (data.message || "Errore"));
+    if (!res.ok || !data.token) {
+      spin.fail("Login fallito: " + (data.error || data.message || "Errore"));
       return;
     }
-    apiToken = data.cliToken;
+    apiToken = data.token;
+    config.jwtToken = data.token;
     spin.succeed("Login effettuato!");
   } else {
     // Registrazione solo via web per sicurezza (captcha)
@@ -1321,7 +1322,7 @@ const setup = async () => {
   }
 
   const remoteConfig = await fetchRemoteConfig(apiToken);
-  config = remoteConfig ? { ...remoteConfig, apiToken } : { apiToken };
+  config = remoteConfig ? { ...remoteConfig, jwtToken: apiToken } : { jwtToken: apiToken };
 
   const { save } = await inquirer.prompt([{
     type: "confirm",
