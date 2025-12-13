@@ -397,7 +397,7 @@ const showDomainsList = async () => {
     });
 
     domains.forEach(d => {
-      const status = d.currentIp ? green('● ONLINE') : red('● OFFLINE');
+      const status = d.ip ? green('● ONLINE') : red('● OFFLINE');
       const lastUpdate = d.lastUpdated
         ? new Date(d.lastUpdated).toLocaleString("it-IT", { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
         : gray('Mai');
@@ -405,7 +405,7 @@ const showDomainsList = async () => {
       table.push([
         status,
         chalk.bold(d.name),
-        d.currentIp || gray('N/D'),
+        d.ip || gray('N/D'),
         `${d.ttl}s`,
         lastUpdate
       ]);
@@ -488,7 +488,7 @@ const deleteDomain = async (name) => {
       name: "selected",
       message: "Quale dominio vuoi eliminare?",
       choices: domains.map(d => ({
-        name: `${d.currentIp ? green('●') : red('●')} ${d.name}`,
+        name: `${d.ip ? green('●') : red('●')} ${d.name}`,
         value: d.name
       }))
     }]);
@@ -1038,7 +1038,7 @@ const showStatsCommand = async () => {
       console.log(JSON.stringify({
         summary: {
           totalDomains: domains.length,
-          onlineDomains: domains.filter(d => d.currentIp).length,
+          onlineDomains: domains.filter(d => d.ip).length,
           totalTokens: tokens.length,
           activeTokens: tokens.filter(t => t.active).length
         },
@@ -1060,7 +1060,7 @@ const showStatsCommand = async () => {
 └─────────────────┘`;
 
     const box3 = `┌─────────────────┐
-│ ${cyan.bold(String(domains.filter(d => d.currentIp).length).padStart(2))} Online      │
+│ ${cyan.bold(String(domains.filter(d => d.ip).length).padStart(2))} Online      │
 └─────────────────┘`;
 
     console.log(gray(box1.split('\n')[0] + '  ' + box2.split('\n')[0] + '  ' + box3.split('\n')[0]));
@@ -1209,8 +1209,8 @@ const showDashboardCommand = async () => {
         currentIp: ipRes?.trim() || null,
         domains: {
           total: domains.length,
-          online: domains.filter(d => d.currentIp).length,
-          list: domains.map(d => ({ name: d.name, ip: d.currentIp, lastUpdated: d.lastUpdated }))
+          online: domains.filter(d => d.ip).length,
+          list: domains.map(d => ({ name: d.name, ip: d.ip, lastUpdated: d.lastUpdated }))
         },
         tokens: {
           total: tokens.length,
@@ -1230,7 +1230,7 @@ const showDashboardCommand = async () => {
     console.log();
 
     // Stats row
-    const onlineDomains = domains.filter(d => d.currentIp).length;
+    const onlineDomains = domains.filter(d => d.ip).length;
     const activeTokens = tokens.filter(t => t.active).length;
 
     console.log(`  ┌──────────────┬──────────────┬──────────────┬──────────────┐`);
@@ -1243,8 +1243,8 @@ const showDashboardCommand = async () => {
     if (domains.length > 0) {
       console.log(`  ${gray('Ultimi domini:')}`);
       domains.slice(0, 5).forEach(d => {
-        const status = d.currentIp ? green('●') : red('●');
-        console.log(`   ${status} ${chalk.bold(d.name)} ${gray('→')} ${d.currentIp || gray('N/D')}`);
+        const status = d.ip ? green('●') : red('●');
+        console.log(`   ${status} ${chalk.bold(d.name)} ${gray('→')} ${d.ip || gray('N/D')}`);
       });
       if (domains.length > 5) console.log(`   ${gray(`... e altri ${domains.length - 5}`)}`);
     }
@@ -1635,14 +1635,14 @@ const interactiveMode = async () => {
         { name: `${gray('📜')} Log attività`, value: "logs" },
         { name: `${purple('🔗')} Webhooks`, value: "webhooks" },
         { name: `${cyan('🌐')} Il mio IP`, value: "my-ip" },
-        new inquirer.Separator(gray('─── Config ───')),
+        new inquirer.Separator(gray('─── Account ───')),
         { name: `${gray('📊')} Stato attuale`, value: "status" },
         { name: `${green('🔄')} Aggiorna DNS`, value: "update" },
-        { name: `${yellow('⚙️ ')} Configurazione`, value: "config" },
-        { name: `${blue('🔧')} Setup`, value: "setup" },
-        { name: `${red('🚪')} Logout`, value: "logout" },
+        { name: `${yellow('⚙️ ')} Impostazioni DNS`, value: "config" },
+        { name: `${blue('🔑')} Login / Cambia account`, value: "setup" },
+        { name: `${red('🚪')} Disconnetti`, value: "logout" },
         new inquirer.Separator(),
-        { name: red("❌ Esci"), value: "exit" }
+        { name: red("❌ Chiudi CLI"), value: "exit" }
       ]
     }]);
 
