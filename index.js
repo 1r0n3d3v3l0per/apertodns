@@ -302,8 +302,8 @@ const spinner = (text) => ora({ text, spinner: "dots", color: "yellow" });
 
 // Helper: get auth headers (supports both JWT and API Key)
 const getAuthHeaders = (token) => {
-  // API Keys start with "ak_"
-  if (token && token.startsWith('ak_')) {
+  // API Keys start with "ak_" or "apertodns_live_" or "apertodns_test_"
+  if (token && (token.startsWith('ak_') || token.startsWith('apertodns_live_') || token.startsWith('apertodns_test_'))) {
     return { 'X-API-Key': token };
   }
   return { Authorization: `Bearer ${token}` };
